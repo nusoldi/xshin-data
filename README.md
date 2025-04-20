@@ -1,3 +1,6 @@
+
+**Forked from https://github.com/1000xsh/xshin-data by ax-x2 - temporary working repo to add python script**
+
 setup
 
 ```ǹpm install```
