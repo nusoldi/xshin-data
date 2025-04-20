@@ -1,0 +1,15 @@
+{
+  "name": "xshin-data-fetcher",
+  "version": "1.0.0",
+  "main": "xshin.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "description": "",
+  "dependencies": {
+    "axios": "^1.8.4"
+  }
+}
