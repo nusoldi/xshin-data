@@ -1,6 +1,7 @@
 import json
 import pandas as pd
 import os
+import openpyxl
 
 # Function to convert lamports to SOL (1 SOL = 1,000,000,000 lamports)
 def lamports_to_sol(lamports_str):
@@ -147,7 +148,7 @@ for i, validator in enumerate(data):
         })
         
         # Print progress for large files
-        if (i + 1) % 1000 == 0:
+        if (i + 1) % 100 == 0:
             print(f"Processed {i + 1} validators...")
             
     except Exception as e:
@@ -174,8 +175,9 @@ stake_columns = [
 for col in stake_columns:
     df[col] = df[col].apply(lamports_to_sol)
 
-# Format the total_score as requested (normalized by 100 with 6 decimals)
-df['total_score'] = df['total_score'].apply(lambda x: x * 100)
+# Format the total_score as requested - we'll handle this in Excel formatting
+# DO NOT multiply by 100 here
+# df['total_score'] = df['total_score'].apply(lambda x: x * 100)
 
 # Rename columns for better readability
 df = df.rename(columns={
@@ -221,16 +223,139 @@ df = df.rename(columns={
     'noneligibility_reasons': 'Noneligibility Reasons'
 })
 
-# Format numeric columns with appropriate precision
-df['Total Score'] = df['Total Score'].apply(lambda x: f"{x:.6f}")
+# Format percentage columns 
 df['APY'] = df['APY'].apply(lambda x: f"{x*100:.6f}%")  # Convert to percentage with 6 decimals
 df['Skip Rate'] = df['Skip Rate'].apply(lambda x: f"{x*100:.6f}%")  # Convert to percentage with 6 decimals
 df['Prior Skip Rate'] = df['Prior Skip Rate'].apply(lambda x: f"{x*100:.6f}%")
 df['Subsequent Skip Rate'] = df['Subsequent Skip Rate'].apply(lambda x: f"{x*100:.6f}%")
 
+# Reorder Total Score and Pubkey (Total Score now comes before Pubkey)
+cols = df.columns.tolist()
+rank_idx = cols.index('Rank')
+pubkey_idx = cols.index('Pubkey')
+total_score_idx = cols.index('Total Score')
+
+# Remove columns from list
+cols.pop(total_score_idx)
+cols.pop(pubkey_idx if pubkey_idx < total_score_idx else pubkey_idx - 1)
+
+# Insert them in the desired order
+cols.insert(rank_idx + 1, 'Total Score')
+cols.insert(rank_idx + 2, 'Pubkey')
+
+# Move Details, Icon URL, and Website URL columns to the end
+cols_to_move = ['Details', 'Icon URL', 'Website URL']
+for col in cols_to_move:
+    cols.remove(col)
+# Then append them at the end
+cols = cols + cols_to_move
+
+# Reorder the dataframe
+df = df[cols]
+
 # Save to Excel
-output_file = 'all_validators_rankings.xlsx'
+output_file = 'xshin_validator_rankings.xlsx'
 print(f"Saving to Excel file: {output_file}...")
-df.to_excel(output_file, index=False)
+
+# Use ExcelWriter with openpyxl to format the Excel output
+with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
+    df.to_excel(writer, index=False, sheet_name='Validator Rankings')
+    
+    # Get the worksheet
+    worksheet = writer.sheets['Validator Rankings']
+    
+    # Define column groups for formatting
+    stake_columns = [
+        'Active Stake (SOL)', 'Activating Stake (SOL)', 'Deactivating Stake (SOL)', 
+        'Target Pool Stake (SOL)', 'Pool Active Stake (SOL)', 'Pool Activating Stake (SOL)', 
+        'Pool Deactivating Stake (SOL)'
+    ]
+    
+    # Find column indices and apply formatting - First pass: special data formatting
+    for i, col in enumerate(df.columns):
+        col_letter = chr(65 + i) if i < 26 else chr(64 + i // 26) + chr(65 + i % 26)
+        
+        # Apply stake formatting 
+        if col in stake_columns:
+            for row in range(2, len(df) + 2):  # Excel is 1-indexed and has a header
+                cell = f"{col_letter}{row}"
+                worksheet[cell].number_format = '#,##0.00'
+                
+        # Apply normalized score formatting
+        elif col.startswith('Normalized'):
+            for row in range(2, len(df) + 2):
+                cell = f"{col_letter}{row}"
+                worksheet[cell].number_format = '0.000000'
+                
+                # Multiply normalized scores by 100 for display
+                if worksheet[cell].value is not None:
+                    worksheet[cell].value = worksheet[cell].value * 100
+        
+        # Format Total Score (multiply by 100 for display)
+        elif col == 'Total Score':
+            for row in range(2, len(df) + 2):
+                cell = f"{col_letter}{row}"
+                worksheet[cell].number_format = '0.000000'
+                
+                # Multiply by 100 for display
+                if worksheet[cell].value is not None:
+                    worksheet[cell].value = worksheet[cell].value * 100
+    
+    # Second pass: Apply global formatting to ALL cells (alignment and font)
+    for i, col in enumerate(df.columns):
+        col_letter = chr(65 + i) if i < 26 else chr(64 + i // 26) + chr(65 + i % 26)
+        
+        # Apply to all cells including header
+        for row in range(1, len(df) + 2):
+            cell = f"{col_letter}{row}"
+            worksheet[cell].alignment = openpyxl.styles.Alignment(horizontal='left', vertical='center')
+            worksheet[cell].font = openpyxl.styles.Font(size=10)
+            
+            # Make headers bold
+            if row == 1:
+                worksheet[cell].font = openpyxl.styles.Font(size=10, bold=True)
+    
+    # Third pass: Color rows with Pool Active Stake > 0
+    pool_active_col_idx = df.columns.get_loc('Pool Active Stake (SOL)')
+    pool_active_col_letter = chr(65 + pool_active_col_idx) if pool_active_col_idx < 26 else chr(64 + pool_active_col_idx // 26) + chr(65 + pool_active_col_idx % 26)
+    
+    # Light green fill color
+    light_green_fill = openpyxl.styles.PatternFill(start_color='EBF1DE', end_color='EBF1DE', fill_type='solid')
+    
+    # Apply fill to rows where Pool Active Stake > 0
+    for row in range(2, len(df) + 2):  # Skip header
+        pool_active_cell = f"{pool_active_col_letter}{row}"
+        
+        # Check if Pool Active Stake > 0
+        if worksheet[pool_active_cell].value and float(str(worksheet[pool_active_cell].value).replace(',', '')) > 0:
+            # Apply fill to entire row
+            for i, col in enumerate(df.columns):
+                col_letter = chr(65 + i) if i < 26 else chr(64 + i // 26) + chr(65 + i % 26)
+                cell = f"{col_letter}{row}"
+                worksheet[cell].fill = light_green_fill
+    
+    # Finally: Auto-fit column widths now that all data and formatting is applied
+    for i, col in enumerate(df.columns):
+        col_letter = chr(65 + i) if i < 26 else chr(64 + i // 26) + chr(65 + i % 26)
+        
+        # Auto-fit column width based on content
+        max_length = 0
+        column = worksheet[col_letter]
+        for cell in column:
+            try:
+                if len(str(cell.value)) > max_length:
+                    max_length = len(str(cell.value))
+            except:
+                pass
+        adjusted_width = (max_length + 2)
+        worksheet.column_dimensions[col_letter].width = adjusted_width
+    
+    # After auto-width, set specific widths for certain columns
+    specific_width_columns = ['Name', 'Noneligibility Reasons', 'Details', 'Icon URL', 'Website URL']
+    for col_name in specific_width_columns:
+        if col_name in df.columns:
+            col_idx = df.columns.get_loc(col_name)
+            col_letter = chr(65 + col_idx) if col_idx < 26 else chr(64 + col_idx // 26) + chr(65 + col_idx % 26)
+            worksheet.column_dimensions[col_letter].width = 40
 
 print(f"Excel file '{output_file}' created successfully with {len(df)} validators ranked by total score.") 
